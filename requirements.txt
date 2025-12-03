@@ -1,8 +1,6 @@
-flask==3.0.0
-pandas==2.1.4
-requests==2.31.0
-beautifulsoup4==4.12.2
-openpyxl==3.1.5
-urllib3==2.1.0
-gunicorn==21.2.0
-numpy==1.26.3
+flask>=2.3.0
+pandas>=2.0.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+openpyxl>=3.1.0
+gunicorn>=21.0.0
