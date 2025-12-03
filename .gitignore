@@ -1,0 +1,22 @@
+setup.py
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.DS_Store
+*.xlsx
+.env
+venv/
+env/
+.vscode/
+.idea/
+*.log
+session/
+
+# Exclude large executable files and project versions
+project versions/
+run.spec
+*.app
+*.exe

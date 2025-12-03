@@ -1,0 +1,618 @@
+================================================================================
+                    NTU PUBLICATION AGGREGATOR - PROJECT EXPLANATION
+================================================================================
+
+OVERVIEW
+--------
+This is a Flask-based web application that aggregates academic publications from 
+multiple sources (ORCID, CrossRef, OpenAlex, Google Scholar) for NTU professors.
+It supports both single professor search and bulk Excel upload for multiple professors.
+
+
+MAIN COMPONENTS
+---------------
+1. app.py           - Flask web server and routing
+2. paper_count.py   - Core logic for fetching publications from APIs
+3. index.html       - Frontend interface with search forms and data display
+4. run.py           - Application launcher
+5. static/          - CSS, JavaScript, and static assets
+6. templates/       - HTML templates
+
+
+================================================================================
+                            SINGLE SEARCH WORKFLOW
+================================================================================
+
+USER INPUT
+----------
+User enters:
+- Professor Name (e.g., "Akshar Saxena")
+- Start Year (e.g., 2020)
+- End Year (e.g., 2023)
+- Clicks "Search" button
+
+                                    |
+                                    v
+
+FRONTEND (index.html)
+---------------------
+Form submission triggers JavaScript:
+- Validates input fields
+- Sends POST request to /search endpoint
+- Shows loading indicator
+
+                                    |
+                                    v
+
+BACKEND (app.py)
+----------------
+Route: @app.route('/search', methods=['POST'])
+- Extracts name, from_year, to_year from request
+- Calls: GetPublicationsByName(name, from_year, to_year)
+
+                                    |
+                                    v
+
+PUBLICATION AGGREGATION (paper_count.py)
+----------------------------------------
+Function: GetPublicationsByName()
+
+Step 1: Search ORCID by Name
+    |
+    ├──> _search_orcid_by_name()
+    |    ├──> Searches ORCID API for author by name
+    |    ├──> Gets ORCID ID if found
+    |    └──> Calls _get_publications_from_orcid() with ORCID ID
+    |
+    v
+
+Step 2: Search CrossRef
+    |
+    ├──> _search_crossref()
+    |    ├──> Queries CrossRef API with author name
+    |    ├──> Filters by date range (year only)
+    |    ├──> Extracts: title, DOI, authors, date (YYYY-MM-DD), journal, type
+    |    └──> Returns publications with source="CrossRef"
+    |
+    v
+
+Step 3: Search OpenAlex
+    |
+    ├──> _search_openalex()
+    |    ├──> Queries OpenAlex API with author name
+    |    ├──> Filters by publication year range
+    |    ├──> Extracts: title, DOI, authors, date, journal, citations, type
+    |    └──> Returns publications with source="OpenAlex"
+    |
+    v
+
+Step 4: Deduplicate and Sort
+    |
+    ├──> _dedupe_and_sort()
+    |    |
+    |    ├──> Normalize each publication:
+    |    |    ├──> _normalize_row()
+    |    |    ├──> Standardizes field names
+    |    |    ├──> Preserves date format (YYYY, YYYY-MM, or YYYY-MM-DD)
+    |    |    ├──> Extracts year for sorting
+    |    |    └──> Identifies NTU-affiliated authors for "Authors in School"
+    |    |
+    |    ├──> Group by DOI (or title if no DOI):
+    |    |    └──> Creates unique key: normalize(doi) or normalize(title)
+    |    |
+    |    ├──> Apply source priority for duplicates:
+    |    |    Priority order: ORCID (0) > Google Scholar (1) > CrossRef (2) > OpenAlex (3) > Unknown (4)
+    |    |    ├──> Keep publication from highest priority source
+    |    |    ├──> Merge "Authors in School" from all duplicates
+    |    |    └──> Keep highest citation count
+    |    |
+    |    └──> Sort by year (descending), then title (ascending)
+    |
+    v
+
+Step 5: Categorize Publications
+    |
+    ├──> Separate into:
+    |    ├──> Journal articles
+    |    └──> Book chapters
+    |
+    v
+
+Step 6: Compute Statistics
+    |
+    ├──> compute_stats()
+    |    ├──> Count publications by year
+    |    ├──> Count publications by source (ORCID, CrossRef, OpenAlex, etc.)
+    |    ├──> Calculate total citations
+    |    └──> Return: total_count, year_counts, source_counts, total_citations
+    |
+    v
+
+RESPONSE TO FRONTEND
+--------------------
+app.py returns JSON:
+{
+    "journals": [...],           // Journal article data
+    "chapters": [...],           // Book chapter data
+    "stats": {
+        "total": 45,
+        "year_counts": {...},
+        "source_counts": {...},
+        "total_citations": 1234
+    }
+}
+
+                                    |
+                                    v
+
+FRONTEND DISPLAY (index.html)
+------------------------------
+JavaScript processes response:
+1. Displays statistics in cards
+2. Generates bar chart (publications by year) using Chart.js
+3. Generates pie chart (publications by source) using Chart.js
+4. Populates journal table with columns:
+   - Article Title
+   - All Authors
+   - Authors in School (NTU-affiliated)
+   - Publication Date (displays as "Year" but shows full date)
+   - Journal Title
+   - Source
+   - Citations
+5. Populates chapter table (if any) with filtered columns:
+   - All Authors
+   - Authors in School
+   - Publication Date
+
+
+================================================================================
+                          EXCEL UPLOAD WORKFLOW
+================================================================================
+
+USER INPUT
+----------
+User:
+- Clicks "Choose File" and selects Excel file (.xlsx, .xls, .csv)
+- Excel must have columns: "Name" and "ORCID_ID"
+- Optional columns: "From Year", "To Year" (defaults: 1900-2100)
+- Clicks "Upload and Process" button
+
+                                    |
+                                    v
+
+FRONTEND (index.html)
+---------------------
+Form submission:
+- Shows "Processing..." status indicator
+- Uploads file via multipart/form-data POST to /upload
+
+                                    |
+                                    v
+
+BACKEND (app.py)
+----------------
+Route: @app.route('/upload', methods=['POST'])
+
+Step 1: File Validation
+    |
+    ├──> Check if file exists in request
+    ├──> Validate file extension (.xlsx, .xls, .csv)
+    └──> Save to temp location
+    |
+    v
+
+Step 2: Read Excel File
+    |
+    ├──> Read with pandas: pd.read_excel() or pd.read_csv()
+    ├──> Validate required columns exist
+    └──> Extract rows into list
+    |
+    v
+
+Step 3: Process Each Professor
+    |
+    ├──> For each row in Excel:
+    |    |
+    |    ├──> Extract: name, orcid_id, from_year, to_year
+    |    |
+    |    ├──> Call: _get_publications_from_orcid(orcid_id, from_year, to_year)
+    |    |    |
+    |    |    └──> paper_count.py: _get_publications_from_orcid()
+    |    |         |
+    |    |         ├──> Query ORCID API with ORCID ID
+    |    |         ├──> Get all publications for that ORCID
+    |    |         ├──> Filter by year range (year-only comparison)
+    |    |         ├──> Extract data:
+    |    |         |    ├──> Title, DOI
+    |    |         |    ├──> Authors (with affiliations)
+    |    |         |    ├──> Publication Date (YYYY-MM-DD format with zero-padding)
+    |    |         |    ├──> Journal Title
+    |    |         |    ├──> Type (journal/chapter)
+    |    |         |    └──> Source (always "ORCID")
+    |    |         |
+    |    |         └──> Return: (journal_rows, chapter_rows)
+    |    |
+    |    ├──> Normalize publications:
+    |    |    └──> _normalize_row() in app.py
+    |    |         ├──> Standardize field names
+    |    |         ├──> Convert date to YYYY-MM-DD format
+    |    |         ├──> Extract year
+    |    |         └──> Identify NTU authors for "Authors in School"
+    |    |
+    |    └──> Append to results
+    |
+    v
+
+Step 4: Aggregate Results
+    |
+    ├──> Combine all professors' publications
+    ├──> Separate into:
+    |    ├──> all_journals (journal articles)
+    |    └──> all_chapters (book chapters)
+    |
+    v
+
+Step 5: Create Output Excel
+    |
+    ├──> Create Excel writer: pd.ExcelWriter()
+    |
+    ├──> Journal Sheet:
+    |    ├──> Columns: Article Title, All Authors, Authors in School,
+    |    |              Publication Date, Year, Journal Title, Source, Citations
+    |    └──> Write DataFrame to "Journals" sheet
+    |
+    ├──> Chapter Sheet (if any chapters exist):
+    |    ├──> Columns: Article Title, All Authors, Authors in School,
+    |    |              Publication Date, Year, Journal Title, Source
+    |    └──> Write DataFrame to "Chapters" sheet
+    |
+    └──> Save output file: output_publications_YYYYMMDD_HHMMSS.xlsx
+    |
+    v
+
+Step 6: Return File to User
+    |
+    └──> send_file() - Downloads Excel file to user's browser
+
+                                    |
+                                    v
+
+FRONTEND COMPLETION
+-------------------
+- File downloads automatically
+- Status changes from "Processing..." to "Done!"
+- Terminal shows: "✓ Excel file created successfully"
+
+
+================================================================================
+                          KEY TECHNICAL DETAILS
+================================================================================
+
+DATE HANDLING
+-------------
+1. Input: Year-only filtering (from_year to to_year)
+2. Storage: Full dates preserved from APIs:
+   - ORCID: YYYY, YYYY-MM, or YYYY-MM-DD (zero-padded)
+   - CrossRef: YYYY, YYYY-MM, or YYYY-MM-DD (zero-padded)
+   - OpenAlex: Uses publication_date field directly
+3. Filtering: Year-only comparison (ignores month/day)
+4. Display: Shows full date when available
+
+
+DEDUPLICATION LOGIC
+-------------------
+Publications are considered duplicates if they have:
+- Same DOI (normalized: lowercase, stripped)
+- OR same title (normalized: lowercase, no special chars, no spaces)
+
+When duplicates found:
+1. Keep publication from highest-priority source:
+   ORCID (priority 0) > Google Scholar (1) > CrossRef (2) > OpenAlex (3)
+2. Merge "Authors in School" from all duplicate entries
+3. Keep highest citation count
+4. Use publication date from kept source
+
+
+NTU AFFILIATION DETECTION
+--------------------------
+An author is considered "in school" (NTU-affiliated) if their affiliation contains:
+- "Nanyang Technological University"
+- "NTU Singapore"
+- "NTU,"
+- Case-insensitive matching
+
+Special rule: The searched professor is always listed first in "Authors in School"
+
+
+SOURCE PRIORITY
+---------------
+When multiple sources return the same publication:
+1. ORCID (highest priority) - Direct from author's profile
+2. Google Scholar - Comprehensive but sometimes noisy
+3. CrossRef - Reliable DOI-based metadata
+4. OpenAlex - Large database, good coverage
+
+
+API ENDPOINTS USED
+------------------
+1. ORCID API:
+   - Search: https://pub.orcid.org/v3.0/search/
+   - Works: https://pub.orcid.org/v3.0/{orcid-id}/works
+
+2. CrossRef API:
+   - Search: https://api.crossref.org/works
+
+3. OpenAlex API:
+   - Search: https://api.openalex.org/works
+
+4. Google Scholar: (via scholarly library)
+   - Used in some search contexts
+
+
+PUBLICATION CATEGORIZATION
+---------------------------
+Journal Article if:
+- type = "article"
+- type = "journal-article"
+- OR has journal_title
+
+Book Chapter if:
+- type = "book"
+- type = "chapter"
+- type = "book-chapter"
+
+
+STATISTICS COMPUTATION
+-----------------------
+For each result set:
+1. Total Publications: Count of unique publications after deduplication
+2. Publications by Year: Histogram of publication counts per year
+3. Publications by Source: Pie chart showing source distribution
+4. Total Citations: Sum of citation counts (when available)
+
+
+================================================================================
+                            DATA FLOW DIAGRAM
+================================================================================
+
+SINGLE SEARCH:
+--------------
+    [User Input Form]
+          |
+          | name, from_year, to_year
+          v
+    [Flask /search]
+          |
+          v
+    [GetPublicationsByName]
+          |
+          +---> [ORCID Search] ----+
+          |                         |
+          +---> [CrossRef Search] --+
+          |                         |
+          +---> [OpenAlex Search] --+
+          |                         |
+          v                         |
+    [Collect All Results] <--------+
+          |
+          v
+    [Deduplicate & Sort]
+          |
+          +---> [Normalize Dates]
+          +---> [Group by DOI/Title]
+          +---> [Apply Source Priority]
+          +---> [Merge NTU Authors]
+          +---> [Sort by Year/Title]
+          |
+          v
+    [Categorize: Journals vs Chapters]
+          |
+          v
+    [Compute Statistics]
+          |
+          v
+    [Return JSON to Frontend]
+          |
+          v
+    [Display Tables & Charts]
+
+
+BULK UPLOAD:
+------------
+    [User Uploads Excel]
+          |
+          | professors.xlsx
+          v
+    [Flask /upload]
+          |
+          v
+    [Read Excel with pandas]
+          |
+          v
+    [For Each Professor Row]
+          |
+          +---> [Extract: name, orcid_id, years]
+          |           |
+          |           v
+          |     [_get_publications_from_orcid]
+          |           |
+          |           +---> [Query ORCID API]
+          |           +---> [Filter by Year]
+          |           +---> [Extract Metadata]
+          |           +---> [Return Publications]
+          |           |
+          |           v
+          +<----[Normalize Publications]
+          |
+          v
+    [Aggregate All Results]
+          |
+          v
+    [Create Excel with pandas]
+          |
+          +---> [Journals Sheet]
+          +---> [Chapters Sheet]
+          |
+          v
+    [Save output_publications_*.xlsx]
+          |
+          v
+    [Download File to User]
+
+
+================================================================================
+                          FRONTEND FEATURES
+================================================================================
+
+SEARCH INTERFACE
+----------------
+- Clean, modern Bootstrap 5 design
+- Two tabs: "Single Search" and "Bulk Upload"
+- Year range inputs with validation
+- Real-time status indicators
+
+
+RESULTS DISPLAY
+---------------
+1. Statistics Cards:
+   - Total Publications
+   - Publications by Year
+   - Publications by Source
+   - Total Citations
+
+2. Visualizations:
+   - Bar Chart: Publications per year (Chart.js)
+   - Pie Chart: Publications by source (Chart.js)
+
+3. Data Tables:
+   - Responsive Bootstrap tables
+   - Sortable columns
+   - Different columns for journals vs chapters
+   - "Authors in School" highlighted with NTU affiliations
+
+
+SPECIAL TABLE FEATURES
+-----------------------
+Journal Tables:
+- Show: Title, Authors, Authors in School, Publication Date, Journal, Source, Citations
+- "Publication Date" column hidden
+- "Year" column renamed to "Publication Date" (but shows full date)
+
+Chapter Tables:
+- Show: Authors, Authors in School, Publication Date
+- Hide: DOI, Title, Journal Title (less relevant for chapters)
+
+
+================================================================================
+                          ERROR HANDLING
+================================================================================
+
+API Failures:
+- Graceful fallback if one API fails
+- Other sources still processed
+- Empty results returned for failed source
+
+Excel Upload Errors:
+- Invalid file format → Error message
+- Missing columns → Error message
+- Invalid ORCID → Skip professor, continue with others
+
+Date Parsing:
+- Invalid dates → Use year only
+- Missing dates → Set to None
+- Year extraction always attempted as fallback
+
+
+================================================================================
+                          PERFORMANCE NOTES
+================================================================================
+
+- Single search: ~5-15 seconds (queries 3 APIs in parallel)
+- Bulk upload: ~3-5 seconds per professor (ORCID only, sequential)
+- Deduplication: O(n) where n = number of publications
+- Large Excel files (100+ professors): ~5-10 minutes
+
+
+================================================================================
+                          FILE OUTPUT FORMAT
+================================================================================
+
+Output Excel Structure:
+-----------------------
+Sheet 1: "Journals"
+Columns:
+- Article Title
+- All Authors
+- Authors in School
+- Publication Date (YYYY-MM-DD format)
+- Year (extracted from date)
+- Journal Title
+- Source (ORCID, CrossRef, OpenAlex, etc.)
+- Citations
+
+Sheet 2: "Chapters" (if applicable)
+Columns:
+- All Authors
+- Authors in School
+- Publication Date
+- Year
+
+Filename: output_publications_YYYYMMDD_HHMMSS.xlsx
+
+
+================================================================================
+                          SECURITY & BEST PRACTICES
+================================================================================
+
+1. File Upload Security:
+   - Validates file extensions
+   - Uses secure_filename() for saved files
+   - Temporary files cleaned up after processing
+
+2. API Rate Limiting:
+   - Respects ORCID API rate limits
+   - Uses public ORCID endpoints (no auth required)
+
+3. Data Privacy:
+   - No data stored permanently on server
+   - Uploaded files deleted after processing
+   - Results only returned to user, not saved
+
+4. Error Messages:
+   - User-friendly error messages
+   - Technical details logged server-side
+
+
+================================================================================
+                          DEPLOYMENT
+================================================================================
+
+Development Mode:
+- Run: python run.py
+- Access: http://localhost:5001
+- Debug mode enabled
+
+Production Mode:
+- Uses PyInstaller for standalone executable
+- Bundled with templates and static files
+- Can run without Python installation
+
+
+================================================================================
+                          FUTURE ENHANCEMENTS
+================================================================================
+
+Potential improvements:
+1. Async API calls for faster single search
+2. Progress bar for bulk uploads
+3. Export to CSV/PDF formats
+4. Publication comparison between professors
+5. Citation analysis and trends
+6. Author collaboration networks
+7. Export visualizations as images
+8. Email notification when bulk processing completes
+
+
+================================================================================
+                          END OF DOCUMENTATION
+================================================================================
